@@ -24,56 +24,28 @@ import (
 	"strconv"
 	"testing"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"knative.dev/eventing/test/base/resources"
 	"knative.dev/eventing/test/common"
 	"knative.dev/test-infra/shared/junit"
 	"knative.dev/test-infra/shared/testgrid"
 )
 
-func TestLatencyForInMemoryBrokerTrigger(t *testing.T) {
-	testLatencyForBrokerTrigger(t, common.InMemoryChannelTypeMeta)
+func TestMyselfLatency(t *testing.T) {
+	testMyselfLatency(t)
 }
 
-func testLatencyForBrokerTrigger(t *testing.T, channelTypeMeta *metav1.TypeMeta) {
+func testMyselfLatency(t *testing.T) {
 	const (
-		senderName  = "perf-latency-sender"
-		brokerName  = "perf-latency-broker"
-		triggerName = "perf-latency-trigger"
-
+		senderName     = "perf-latency-sender"
 		latencyPodName = "perf-latency-pod"
-
-		// the number of events we want to send to the Broker in parallel.
-		// TODO(Fredy-Z): for now this test will only be run against a single-node cluster, and as we want to calculate
-		//                the sample percentile for the test results, 1000 seems to be a reasonable number. In the future
-		//                we might want to change it to a higher number for more complicated tests.
-		eventCount = 1000
 	)
 
 	client := common.Setup(t, false)
 	//defer common.TearDown(client)
 
-	// create required RBAC resources including ServiceAccounts and ClusterRoleBindings for Brokers
-	//client.CreateRBACResourcesForBrokers()
-
-	// create a new broker
-	client.CreateBrokerOrFail(brokerName, channelTypeMeta)
-	client.WaitForResourceReady(brokerName, common.BrokerTypeMeta)
-	brokerURL, err := client.GetAddressableURI(brokerName, common.BrokerTypeMeta)
-	if err != nil {
-		t.Fatalf("failed to get the URL for the broker: %v", err)
-	}
-
 	// create event latency measurement service
-	latencyPod := resources.EventLatencyPod(latencyPodName, brokerURL, eventCount)
+	latencyPod := resources.EventLatencyPod(latencyPodName, latencyPodName, 1000)
 	client.CreatePodOrFail(latencyPod, common.WithService(latencyPodName))
-
-	// create the trigger to receive the event and forward it back to the event latency measurement service
-	client.CreateTriggerOrFail(
-		triggerName,
-		resources.WithBroker(brokerName),
-		resources.WithSubscriberRefForTrigger(latencyPodName),
-	)
 
 	// wait for all test resources to be ready, so that we can start sending events
 	if err := client.WaitForAllTestResourcesReady(); err != nil {

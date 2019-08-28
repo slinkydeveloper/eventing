@@ -18,39 +18,8 @@ package main
 
 import (
 	"math"
-	"math/rand"
 	"sort"
-	"time"
 )
-
-func init() {
-	rand.Seed(time.Now().UnixNano())
-}
-
-var letterRunes = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
-
-// generateRandString returns a random string with the given length.
-func generateRandString(length int) string {
-	b := make([]rune, length)
-	for i := range b {
-		b[i] = letterRunes[rand.Intn(len(letterRunes))]
-	}
-	return string(b)
-}
-
-func max(num1, num2 int64) int64 {
-	if num1 > num2 {
-		return num1
-	}
-	return num2
-}
-
-func min(num1, num2 int64) int64 {
-	if num1 < num2 {
-		return num1
-	}
-	return num2
-}
 
 type int64Slice []int64
 
