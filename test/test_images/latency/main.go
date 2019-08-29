@@ -20,18 +20,18 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/cloudevents/sdk-go/pkg/cloudevents/transport/http"
+	cloudevents "github.com/cloudevents/sdk-go"
+	cehttp "github.com/cloudevents/sdk-go/pkg/cloudevents/transport/http"
 	vegeta "github.com/tsenart/vegeta/lib"
 	"knative.dev/eventing/test/common"
+	"knative.dev/eventing/test/performance"
+	pkgpacers "knative.dev/pkg/test/vegeta/pacers"
 	"log"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
-
-	cloudevents "github.com/cloudevents/sdk-go"
-	"knative.dev/eventing/test/performance"
-	pkgpacers "knative.dev/pkg/test/vegeta/pacers"
 )
 
 const (
@@ -52,6 +52,7 @@ var (
 	encoding           string
 	eventTimeMap       map[string]chan time.Time
 	sentCh             chan sentState
+	deliveredCh        chan deliveredState
 	receivedCh         chan receivedState
 	resultCh           chan result
 	secondDuration     int
@@ -71,11 +72,21 @@ const (
 	corrupted // TODO(Fredy-Z): corrupted status is not being used now
 )
 
-// state saves the data that is used to generate the metrics
-//type state struct {
-//	latency time.Duration
-//	status  eventStatus
-//}
+type requestInterceptor struct {
+	before func(*http.Request)
+	after  func(*http.Request, *http.Response, error)
+}
+
+func (r requestInterceptor) RoundTrip(request *http.Request) (*http.Response, error) {
+	if r.before != nil {
+		r.before(request)
+	}
+	res, err := http.DefaultTransport.RoundTrip(request)
+	if r.after != nil {
+		r.after(request, res, err)
+	}
+	return res, err
+}
 
 type result struct {
 	sendLatency       time.Duration
@@ -88,16 +99,18 @@ type state struct {
 	at      time.Time
 }
 
-type receivedState state
 type sentState state
+type deliveredState state
+type receivedState state
 
 func init() {
 	flag.StringVar(&sinkURL, "sink", "", "The sink URL for the event destination.")
 	flag.IntVar(&msgSize, "msg-size", 100, "The size of each message we want to send. Generate random strings to avoid caching.")
 	flag.IntVar(&eventNum, "event-count", 10, "The number of events we want to send.")
-	flag.IntVar(&secondDuration, "duration", 20, "Duration of the benchmark in seconds")
+	flag.IntVar(&secondDuration, "duration", 10, "Duration of the benchmark in seconds")
 	flag.Float64Var(&errorRateThreshold, "error-rate-threshold", 0.1, "Rate of error event deliveries we allow. We fail the test if the error rate crosses the threshold.")
 	flag.StringVar(&encoding, "encoding", "binary", "The encoding of the cloud event, one of(binary, structured).")
+	//TODO now it works only with binary!!!
 	flag.IntVar(&rps, "rps", 1000, "Maximum request per seconds")
 }
 
@@ -112,13 +125,14 @@ func main() {
 	pessimisticNumberOfMessagesInsideAChannel := rps * 3
 
 	sentCh = make(chan sentState, pessimisticNumberOfMessagesInsideAChannel)
+	deliveredCh = make(chan deliveredState, pessimisticNumberOfMessagesInsideAChannel)
 	receivedCh = make(chan receivedState, pessimisticNumberOfMessagesInsideAChannel)
 	resultCh = make(chan result, pessimisticNumberOfTotalMessages)
 
 	println("Starting cloud event processor")
 
 	startCloudEventsReceiver()
-	go processE2ELatency()
+	go processLatencies()
 
 	targeter := common.NewCloudEventsTargeter(sinkURL, msgSize, defaultEventType, defaultEventSource, encoding).VegetaTargeter()
 
@@ -143,11 +157,21 @@ func main() {
 	//                Subscriber to become ready before sending the events, but we don't have a way to coordinate between them.
 	//time.Sleep(30 * time.Second)
 
-	println("Starting attack")
+	client := http.Client{Transport: requestInterceptor{before: func(request *http.Request) {
+		id, _ := strconv.ParseUint(request.Header["Ce-Id"][0], 10, 64)
+		sentCh <- sentState{eventId: id, at: time.Now()}
+	}, after: func(request *http.Request, response *http.Response, e error) {
+		if e != nil || response.StatusCode < 200 || response.StatusCode > 300 {
+			resultCh <- result{status: undelivered}
+			return
+		}
+		id, _ := strconv.ParseUint(request.Header.Get("Ce-Id"), 10, 64)
+		deliveredCh <- deliveredState{eventId: id, at: time.Now()}
+	}}}
 
-	vegetaResults := vegeta.NewAttacker(vegeta.MaxWorkers(1), vegeta.Workers(1)).Attack(targeter, pacer, time.Duration(secondDuration)*time.Second, defaultEventType+"-attack")
-
-	println("Starting attack processor")
+	vegetaResults := vegeta.NewAttacker(
+		vegeta.Client(&client),
+	).Attack(targeter, pacer, time.Duration(secondDuration)*time.Second, defaultEventType+"-attack")
 
 	go processVegetaResult(vegetaResults)
 
@@ -156,27 +180,23 @@ func main() {
 }
 
 func processVegetaResult(vegetaResults <-chan *vegeta.Result) {
-	i := 0
-	for res := range vegetaResults {
-		fmt.Printf("Vegeta result %d\n", i)
-		sentCh <- sentState{eventId: res.Seq, at: res.Timestamp} // res.Timestamp is the time when the request was fired!
-		resultCh <- result{sendLatency: res.Latency, status: sent}
+	for _ = range vegetaResults {
 	}
 	close(sentCh)
+	close(deliveredCh)
 
-	// Let's assume that after 5 seconds all responses are received and processed
+	// Let's assume that after 5 seconds all responses are received
 	time.Sleep(5 * time.Second)
-	fmt.Printf("Closing receivedCh")
 	close(receivedCh)
 
-	time.Sleep(time.Second)
-	fmt.Printf("Closing resultCh")
+	// Let's assume that after 3 seconds all responses are processed
+	time.Sleep(3 * time.Second)
 	close(resultCh)
 }
 
 func startCloudEventsReceiver() {
 	// get encoding
-	var encodingOption http.Option
+	var encodingOption cehttp.Option
 	switch encoding {
 	case "binary":
 		encodingOption = cloudevents.WithBinaryEncoding()
@@ -209,30 +229,30 @@ func processReceiveEvent(event cloudevents.Event) {
 	receivedCh <- receivedState{id, time.Now()}
 }
 
-func processE2ELatency() {
+func processLatencies() {
 	sentEventsMap := make(map[uint64]time.Time)
 	for {
 		select {
 		case s, ok := <-sentCh:
 			if ok {
 				sentEventsMap[s.eventId] = s.at
-				fmt.Printf("Sent %d at %s", s.eventId, s.at.String())
-			} else {
-				fmt.Printf("SentCh closed")
+			}
+		case d, ok := <-deliveredCh:
+			if ok {
+				timestampSent := sentEventsMap[d.eventId]
+				sendLatency := d.at.Sub(timestampSent)
+				resultCh <- result{sendLatency: sendLatency, status: sent}
 			}
 		case r, ok := <-receivedCh:
 			if ok {
 				timestampSent, ok := sentEventsMap[r.eventId]
 				if ok {
 					e2eLatency := r.at.Sub(timestampSent)
-					fmt.Printf("Received %d at %s", r.eventId, r.at.String())
 					resultCh <- result{e2eReceiveLatency: e2eLatency, status: received}
 				} else {
-					fmt.Printf("Corrupted")
 					resultCh <- result{status: corrupted}
 				}
 			} else {
-				fmt.Printf("ReceivedCh closed")
 				return
 			}
 		}
@@ -245,7 +265,6 @@ func exportTestResult() {
 	var sendLatency = make([]int64, 0)
 	var e2eLatency = make([]int64, 0)
 	for eventState := range resultCh {
-		println("New result")
 		switch eventState.status {
 		case sent:
 			sendLatency = append(sendLatency, int64(eventState.sendLatency))
@@ -270,11 +289,14 @@ func exportTestResult() {
 	builder.WriteString("\n")
 
 	// create latency metrics
+	builder.WriteString("send latency\n")
 	for _, perc := range []float64{0.50, 0.90, 0.99} {
 		samplePercentile := float32(calculateSamplePercentile(sendLatency, perc)) / float32(1e9)
 		name := fmt.Sprintf("p%d(s)", int(perc*100))
 		builder.WriteString(fmt.Sprintf("%s: %f\n", name, samplePercentile))
 	}
+
+	builder.WriteString("e2e latency\n")
 	for _, perc := range []float64{0.50, 0.90, 0.99} {
 		samplePercentile := float32(calculateSamplePercentile(e2eLatency, perc)) / float32(1e9)
 		name := fmt.Sprintf("p%d(s)", int(perc*100))

@@ -44,7 +44,7 @@ func testMyselfLatency(t *testing.T) {
 	//defer common.TearDown(client)
 
 	// create event latency measurement service
-	latencyPod := resources.EventLatencyPod(latencyPodName, latencyPodName, 1000)
+	latencyPod := resources.EventLatencyPod(latencyPodName, "http://localhost:8080", 1000)
 	client.CreatePodOrFail(latencyPod, common.WithService(latencyPodName))
 
 	// wait for all test resources to be ready, so that we can start sending events

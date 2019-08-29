@@ -49,7 +49,7 @@ func (cet CloudEventsTargeter) VegetaTargeter() vegeta.Targeter {
 		DefaultEncodingSelectionFn: cet.encodingSelector,
 	}
 
-	return func(t *vegeta.Target) (err error) {
+	return func(t *vegeta.Target) error {
 		t.Method = "PUT"
 		t.URL = cet.sinkUrl
 
@@ -59,20 +59,20 @@ func (cet CloudEventsTargeter) VegetaTargeter() vegeta.Targeter {
 		event.SetID(strconv.FormatUint(seqStr, 10))
 		event.SetType(cet.eventType)
 		event.SetSource(cet.eventSource)
-		event.SetDataContentType("text/plain")
+
 		if err := event.SetData(payload); err != nil {
-			return err
+			panic(err)
 		}
 
 		m, err := codec.Encode(event)
 		if err != nil {
-			return err
+			panic(err)
 		}
 
-		t.Header = m.(cehttp.Message).Header
-		t.Body = m.(cehttp.Message).Body
+		t.Header = m.(*cehttp.Message).Header
+		t.Body = m.(*cehttp.Message).Body
 
-		return err
+		return nil
 	}
 }
 
