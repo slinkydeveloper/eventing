@@ -24,6 +24,7 @@ import (
 	"knative.dev/pkg/signals"
 	"knative.dev/pkg/test/mako"
 	"log"
+	"runtime/debug"
 	"time"
 )
 
@@ -42,6 +43,9 @@ func init() {
 func main() {
 	// parse the command line flags
 	flag.Parse()
+
+	// Disable the gc
+	debug.SetGCPercent(-1)
 
 	if maxThptExpected <= 0 {
 		log.Fatalf("max-throughput-expected must be > 0")

@@ -23,6 +23,7 @@ import (
 	"knative.dev/eventing/test/common"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"time"
@@ -83,6 +84,9 @@ type paceSpec struct {
 func main() {
 	// parse the command line flags
 	flag.Parse()
+
+	// Disable the gc
+	debug.SetGCPercent(-1)
 
 	if paceFlag == "" {
 		fatalf("pace not set!")
