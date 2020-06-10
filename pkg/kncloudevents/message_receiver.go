@@ -22,6 +22,9 @@ import (
 	nethttp "net/http"
 	"time"
 
+	nethttp2 "golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
+
 	"go.opencensus.io/plugin/ochttp"
 	"go.opencensus.io/plugin/ochttp/propagation/tracecontext"
 )
@@ -34,7 +37,8 @@ type HttpMessageReceiver struct {
 	port int
 
 	handler  nethttp.Handler
-	server   *nethttp.Server
+	h1s      *nethttp.Server
+	h2s      *nethttp2.Server
 	listener net.Listener
 }
 
@@ -53,14 +57,16 @@ func (recv *HttpMessageReceiver) StartListen(ctx context.Context, handler nethtt
 
 	recv.handler = CreateHandler(handler)
 
-	recv.server = &nethttp.Server{
-		Addr:    recv.listener.Addr().String(),
-		Handler: recv.handler,
+	recv.h2s = &nethttp2.Server{}
+	recv.h1s = &nethttp.Server{
+		Addr: recv.listener.Addr().String(),
+		// h2c handler adds support for HTTP/2 Cleartext
+		Handler: h2c.NewHandler(recv.handler, recv.h2s),
 	}
 
 	errChan := make(chan error, 1)
 	go func() {
-		errChan <- recv.server.Serve(recv.listener)
+		errChan <- recv.h1s.Serve(recv.listener)
 	}()
 
 	// wait for the server to return or ctx.Done().
@@ -68,7 +74,7 @@ func (recv *HttpMessageReceiver) StartListen(ctx context.Context, handler nethtt
 	case <-ctx.Done():
 		ctx, cancel := context.WithTimeout(context.Background(), getShutdownTimeout(ctx))
 		defer cancel()
-		err := recv.server.Shutdown(ctx)
+		err := recv.h1s.Shutdown(ctx)
 		<-errChan // Wait for server goroutine to exit
 		return err
 	case err := <-errChan:
