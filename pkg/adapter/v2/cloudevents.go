@@ -26,6 +26,8 @@ import (
 	"github.com/cloudevents/sdk-go/v2/protocol/http"
 	duckv1 "knative.dev/pkg/apis/duck/v1"
 	"knative.dev/pkg/source"
+
+	"knative.dev/eventing/pkg/kncloudevents"
 )
 
 // NewCloudEventsClient returns a client that will apply the ceOverrides to
@@ -35,6 +37,7 @@ func NewCloudEventsClient(target string, ceOverrides *duckv1.CloudEventOverrides
 	if len(target) > 0 {
 		pOpts = append(pOpts, cloudevents.WithTarget(target))
 	}
+	pOpts = append(pOpts, cloudevents.WithRoundTripper(kncloudevents.SetupH2CTracedTransport(nil)))
 
 	p, err := cloudevents.NewHTTP(pOpts...)
 	if err != nil {

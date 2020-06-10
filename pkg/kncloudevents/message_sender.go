@@ -22,6 +22,7 @@ import (
 
 	"go.opencensus.io/plugin/ochttp"
 	"go.opencensus.io/plugin/ochttp/propagation/tracecontext"
+	"knative.dev/pkg/network"
 )
 
 type HttpMessageSender struct {
@@ -30,15 +31,8 @@ type HttpMessageSender struct {
 }
 
 func NewHttpMessageSender(connectionArgs *ConnectionArgs, target string) (*HttpMessageSender, error) {
-	// Add connection options to the default transport.
-	var base = nethttp.DefaultTransport.(*nethttp.Transport).Clone()
-	connectionArgs.ConfigureTransport(base)
-	// Add output tracing.
 	client := &nethttp.Client{
-		Transport: &ochttp.Transport{
-			Base:        base,
-			Propagation: &tracecontext.HTTPFormat{},
-		},
+		Transport: SetupH2CTracedTransport(connectionArgs),
 	}
 
 	return &HttpMessageSender{Client: client, Target: target}, nil
@@ -54,4 +48,11 @@ func (s *HttpMessageSender) NewCloudEventRequestWithTarget(ctx context.Context, 
 
 func (s *HttpMessageSender) Send(req *nethttp.Request) (*nethttp.Response, error) {
 	return s.Client.Do(req)
+}
+
+func SetupH2CTracedTransport(connectionArgs *ConnectionArgs) nethttp.RoundTripper {
+	return &ochttp.Transport{
+		Base:        network.NewH2CTransport(),
+		Propagation: &tracecontext.HTTPFormat{},
+	}
 }

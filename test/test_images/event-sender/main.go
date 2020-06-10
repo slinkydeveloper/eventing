@@ -22,11 +22,14 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	nethttp "net/http"
 	"strconv"
 	"time"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
+	cehttp "github.com/cloudevents/sdk-go/v2/protocol/http"
 	"go.uber.org/zap"
+	"knative.dev/pkg/network"
 
 	"knative.dev/eventing/pkg/tracing"
 )
@@ -98,7 +101,9 @@ func main() {
 		log.Fatalf("unsupported encoding option: %q\n", eventEncoding)
 	}
 
-	t, err := cloudevents.NewHTTP(cloudevents.WithTarget(sink))
+	t, err := cloudevents.NewHTTP(cloudevents.WithTarget(sink), cehttp.WithClient(nethttp.Client{
+		Transport: network.NewH2CTransport(),
+	}))
 	if err != nil {
 		log.Fatalf("failed to create transport, %v", err)
 	}
