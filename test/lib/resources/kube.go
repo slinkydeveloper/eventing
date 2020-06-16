@@ -32,6 +32,7 @@ import (
 	pkgTest "knative.dev/pkg/test"
 
 	cetest "knative.dev/eventing/test/lib/cloudevents"
+	"knative.dev/eventing/test/lib/tracing"
 )
 
 // PodOption enables further configuration of a Pod.
@@ -129,6 +130,7 @@ func eventLoggerPod(imageName string, name string) *corev1.Pod {
 				Name:            imageName,
 				Image:           pkgTest.ImagePath(imageName),
 				ImagePullPolicy: corev1.PullAlways,
+				Env:             []corev1.EnvVar{tracing.GenerateEnv()},
 			}},
 			RestartPolicy: corev1.RestartPolicyAlways,
 		},
@@ -185,6 +187,7 @@ func EventTransformationPod(name string, newEventType string, newEventSource str
 					"-event-data",
 					string(newEventData),
 				},
+				Env: []corev1.EnvVar{tracing.GenerateEnv()},
 			}},
 			RestartPolicy: corev1.RestartPolicyAlways,
 		},

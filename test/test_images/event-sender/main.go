@@ -28,7 +28,7 @@ import (
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"go.uber.org/zap"
 
-	"knative.dev/eventing/pkg/tracing"
+	libtracing "knative.dev/eventing/test/lib/tracing"
 )
 
 var (
@@ -106,7 +106,7 @@ func main() {
 	if addTracing {
 		log.Println("Adding tracing")
 		logger, _ := zap.NewDevelopment()
-		if err := tracing.SetupStaticPublishing(logger.Sugar(), "", tracing.AlwaysSample); err != nil {
+		if err := libtracing.SetupTestImageTracing(logger.Sugar()); err != nil {
 			log.Fatalf("Unable to setup trace publishing: %v", err)
 		}
 	}

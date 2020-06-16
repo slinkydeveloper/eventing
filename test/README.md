@@ -107,6 +107,12 @@ To run one e2e test case, e.g. `TestSingleBinaryEventForChannel`, use
 go test -v -tags=e2e -count=1 ./test/e2e -run ^TestSingleBinaryEventForChannel$
 ```
 
+#### Setup your Zipkin endpoint
+
+Some test image setup tracing, in order to simplify debugging of tests. By default, the test images uses the Zipkin endpoint `http://zipkin.istio-system.svc.cluster.local:9411/api/v2/spans`.
+You can modify this configuration setting the environment variable `ZIPKIN_E2E_ENDPOINT` in your local environment and configuring the `config-tracing` ConfigMap.
+If you're running the tracing conformance tests, you'll also need to modify the [config-tracing ConfigMap used by the conformance tests](./conformance/testdata/config-tracing.yaml). 
+
 ## Environment requirements
 
 There's couple of things you need to install before running e2e tests locally.

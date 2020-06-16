@@ -23,6 +23,8 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	pkgTest "knative.dev/pkg/test"
+
+	"knative.dev/eventing/test/lib/tracing"
 )
 
 type EventSenderOption func(*corev1.Pod)
@@ -84,6 +86,7 @@ func EventSenderPod(imageName string, name string, sink string, event cloudevent
 				Image:           pkgTest.ImagePath(imageName),
 				ImagePullPolicy: corev1.PullAlways,
 				Args:            args,
+				Env:             []corev1.EnvVar{tracing.GenerateEnv()},
 			}},
 			// Never restart the event sender Pod.
 			RestartPolicy: corev1.RestartPolicyNever,
