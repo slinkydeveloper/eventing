@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cloudevents/sdk-go/v2/extensions"
+
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/cloudevents/sdk-go/v2/binding"
 	"github.com/cloudevents/sdk-go/v2/client"
@@ -120,6 +122,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			tracing.BrokerMessagingDestinationAttribute(brokerNamespacedName),
 			tracing.MessagingMessageIDAttribute(event.ID()),
 		)
+		span.AddAttributes(client.EventTraceAttributes(event)...)
+		extensions.FromSpanContext(span.SpanContext()).AddTracingAttributes(event)
 	}
 
 	reporterArgs := &ReportArgs{
@@ -128,7 +132,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		eventType: event.Type(),
 	}
 
-	statusCode, dispatchTime := h.receive(request.Context(), request.Header, event, brokerNamespace, brokerName)
+	statusCode, dispatchTime := h.receive(ctx, request.Header, event, brokerNamespace, brokerName, span)
 	if dispatchTime > noDuration {
 		_ = h.Reporter.ReportEventDispatchTime(reporterArgs, statusCode, dispatchTime)
 	}
@@ -137,13 +141,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	writer.WriteHeader(statusCode)
 }
 
-func (h *Handler) receive(
-	ctx context.Context,
-	headers http.Header,
-	event *cloudevents.Event,
-	brokerNamespace,
-	brokerName string,
-) (int, time.Duration) {
+func (h *Handler) receive(ctx context.Context, headers http.Header, event *cloudevents.Event, brokerNamespace, brokerName string, span *trace.Span) (int, time.Duration) {
 
 	// Setting the extension as a string as the CloudEvents sdk does not support non-string extensions.
 	event.SetExtension(broker.EventArrivalTime, cloudevents.Timestamp{Time: time.Now()})
@@ -161,19 +159,21 @@ func (h *Handler) receive(
 	//  	 channels and look up from the channels Status
 	channelURI := h.getChannelURL(brokerName, brokerNamespace, utils.GetClusterDomainName())
 
-	return h.send(ctx, headers, event, channelURI.String())
+	return h.send(ctx, headers, event, channelURI.String(), span)
 }
 
-func (h *Handler) send(ctx context.Context, headers http.Header, event *cloudevents.Event, target string) (int, time.Duration) {
+func (h *Handler) send(ctx context.Context, headers http.Header, event *cloudevents.Event, target string, span *trace.Span) (int, time.Duration) {
 
 	request, err := h.Sender.NewCloudEventRequestWithTarget(ctx, target)
 	if err != nil {
 		return http.StatusInternalServerError, noDuration
 	}
-	request.Header = utils.PassThroughHeaders(headers)
+
 	message := binding.ToMessage(event)
 	defer message.Finish(nil)
-	err = cehttp.WriteRequest(ctx, message, request)
+
+	additionalHeaders := utils.PassThroughHeaders(headers)
+	err = kncloudevents.WriteHttpRequestWithAdditionalHeaders(ctx, message, request, additionalHeaders)
 	if err != nil {
 		return http.StatusInternalServerError, noDuration
 	}

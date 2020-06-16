@@ -24,7 +24,6 @@ import (
 
 	"github.com/cloudevents/sdk-go/v2/client"
 	"github.com/cloudevents/sdk-go/v2/extensions"
-	"go.uber.org/zap/zapcore"
 
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/cloudevents/sdk-go/v2/binding"
@@ -138,7 +137,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
-	ctx, span := trace.StartSpan(request.Context(), tracing.TriggerMessagingDestination(triggerRef.NamespacedName))
+	ctx, span := trace.StartSpan(ctx, tracing.TriggerMessagingDestination(triggerRef.NamespacedName))
 	defer span.End()
 
 	if span.IsRecordingEvents() {
@@ -149,8 +148,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			tracing.MessagingMessageIDAttribute(event.ID()),
 		)
 		span.AddAttributes(client.EventTraceAttributes(event)...)
+		extensions.FromSpanContext(span.SpanContext()).AddTracingAttributes(event)
 	}
-	extensions.FromSpanContext(span.SpanContext()).AddTracingAttributes(event)
 
 	// Remove the TTL attribute that is used by the Broker.
 	ttl, err := broker.GetTTL(event.Context)
@@ -196,10 +195,10 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	filterResult := h.shouldSendEvent(ctx, &t.Spec, event)
 
 	if filterResult == failFilter {
-		if h.logger.Check(zapcore.DebugLevel, "").Level.Enabled(zapcore.DebugLevel) {
-			b, _ := event.MarshalJSON()
-			h.logger.Debug("Event did not pass filter", zap.Any("triggerRef", triggerRef), zap.String("event", string(b)))
-		}
+		//if h.logger.Check(zapcore.DebugLevel, "").Level.Enabled(zapcore.DebugLevel) {
+		//	b, _ := event.MarshalJSON()
+		//	h.logger.Debug("Event did not pass filter", zap.Any("triggerRef", triggerRef), zap.String("event", string(b)))
+		//}
 		// We do not count the event. The event will be counted in the broker ingress.
 		// If the filter didn't pass, it means that the event wasn't meant for this Trigger.
 		return
@@ -222,7 +221,7 @@ func (h *Handler) send(ctx context.Context, writer http.ResponseWriter, headers 
 	}
 
 	// If there is an event in the response write it to the response
-	statusCode, err := writeResponse(ctx, writer, response, ttl)
+	statusCode, err := writeResponse(ctx, writer, response, ttl, span)
 	if err != nil {
 		h.logger.Error("failed to write response", zap.Error(err))
 	}
@@ -242,12 +241,8 @@ func (h *Handler) sendEvent(ctx context.Context, headers http.Header, target str
 	defer message.Finish(nil)
 
 	additionalHeaders := utils.PassThroughHeaders(headers)
-	if span.IsRecordingEvents() {
-		err = kncloudevents.WriteHttpRequestWithAdditionalHeaders(ctx, message, req, additionalHeaders, tracing.PopulateSpan(span))
-	} else {
-		err = kncloudevents.WriteHttpRequestWithAdditionalHeaders(ctx, message, req, additionalHeaders)
-	}
-	if err := cehttp.WriteRequest(ctx, message, req); err != nil {
+	err = kncloudevents.WriteHttpRequestWithAdditionalHeaders(ctx, message, req, additionalHeaders)
+	if err != nil {
 		return nil, fmt.Errorf("failed to write request: %w", err)
 	}
 
@@ -263,7 +258,7 @@ func (h *Handler) sendEvent(ctx context.Context, headers http.Header, target str
 	return resp, err
 }
 
-func writeResponse(ctx context.Context, writer http.ResponseWriter, resp *http.Response, ttl int32) (int, error) {
+func writeResponse(ctx context.Context, writer http.ResponseWriter, resp *http.Response, ttl int32, span *trace.Span) (int, error) {
 
 	response := cehttp.NewMessageFromHttpResponse(resp)
 	defer response.Finish(nil)
