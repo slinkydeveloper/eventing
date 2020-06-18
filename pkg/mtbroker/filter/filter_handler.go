@@ -22,15 +22,15 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/cloudevents/sdk-go/v2/client"
-	"github.com/cloudevents/sdk-go/v2/extensions"
-
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/cloudevents/sdk-go/v2/binding"
+	"github.com/cloudevents/sdk-go/v2/client"
 	"github.com/cloudevents/sdk-go/v2/event"
 	cehttp "github.com/cloudevents/sdk-go/v2/protocol/http"
 	"go.opencensus.io/trace"
 	"go.uber.org/zap"
+	"knative.dev/pkg/logging"
+
 	eventingv1beta1 "knative.dev/eventing/pkg/apis/eventing/v1beta1"
 	eventinglisters "knative.dev/eventing/pkg/client/listers/eventing/v1beta1"
 	"knative.dev/eventing/pkg/health"
@@ -39,7 +39,6 @@ import (
 	"knative.dev/eventing/pkg/reconciler/trigger/path"
 	"knative.dev/eventing/pkg/tracing"
 	"knative.dev/eventing/pkg/utils"
-	"knative.dev/pkg/logging"
 )
 
 const (
@@ -148,7 +147,6 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			tracing.MessagingMessageIDAttribute(event.ID()),
 		)
 		span.AddAttributes(client.EventTraceAttributes(event)...)
-		extensions.FromSpanContext(span.SpanContext()).AddTracingAttributes(event)
 	}
 
 	// Remove the TTL attribute that is used by the Broker.

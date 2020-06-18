@@ -24,8 +24,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cloudevents/sdk-go/v2/extensions"
-
 	cloudevents "github.com/cloudevents/sdk-go/v2"
 	"github.com/cloudevents/sdk-go/v2/binding"
 	"github.com/cloudevents/sdk-go/v2/client"
@@ -33,6 +31,7 @@ import (
 	"go.opencensus.io/trace"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/types"
+
 	"knative.dev/eventing/pkg/health"
 	"knative.dev/eventing/pkg/kncloudevents"
 	broker "knative.dev/eventing/pkg/mtbroker"
@@ -96,9 +95,11 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		return
 	}
 
+	ctx := request.Context()
+
 	message := cehttp.NewMessageFromHttpRequest(request)
-	defer message.Finish(nil)
-	event, err := binding.ToEvent(request.Context(), message)
+	event, err := binding.ToEvent(ctx, message)
+	message.Finish(nil)
 	if err != nil {
 		h.Logger.Warn("failed to extract event from request", zap.Error(err))
 		writer.WriteHeader(http.StatusBadRequest)
@@ -111,8 +112,8 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		Name:      brokerName,
 		Namespace: brokerNamespace,
 	}
-	ctx := request.Context()
-	ctx, span := trace.StartSpan(ctx, tracing.BrokerMessagingDestination(brokerNamespacedName))
+	var span *trace.Span
+	ctx, span = trace.StartSpan(ctx, tracing.BrokerMessagingDestination(brokerNamespacedName))
 	defer span.End()
 
 	if span.IsRecordingEvents() {
@@ -123,7 +124,6 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 			tracing.MessagingMessageIDAttribute(event.ID()),
 		)
 		span.AddAttributes(client.EventTraceAttributes(event)...)
-		extensions.FromSpanContext(span.SpanContext()).AddTracingAttributes(event)
 	}
 
 	reporterArgs := &ReportArgs{
@@ -132,7 +132,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 		eventType: event.Type(),
 	}
 
-	statusCode, dispatchTime := h.receive(ctx, request.Header, event, brokerNamespace, brokerName, span)
+	statusCode, dispatchTime := h.receive(ctx, request.Header, event, brokerNamespace, brokerName)
 	if dispatchTime > noDuration {
 		_ = h.Reporter.ReportEventDispatchTime(reporterArgs, statusCode, dispatchTime)
 	}
@@ -141,7 +141,7 @@ func (h *Handler) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
 	writer.WriteHeader(statusCode)
 }
 
-func (h *Handler) receive(ctx context.Context, headers http.Header, event *cloudevents.Event, brokerNamespace, brokerName string, span *trace.Span) (int, time.Duration) {
+func (h *Handler) receive(ctx context.Context, headers http.Header, event *cloudevents.Event, brokerNamespace, brokerName string) (int, time.Duration) {
 
 	// Setting the extension as a string as the CloudEvents sdk does not support non-string extensions.
 	event.SetExtension(broker.EventArrivalTime, cloudevents.Timestamp{Time: time.Now()})
@@ -159,10 +159,10 @@ func (h *Handler) receive(ctx context.Context, headers http.Header, event *cloud
 	//  	 channels and look up from the channels Status
 	channelURI := h.getChannelURL(brokerName, brokerNamespace, utils.GetClusterDomainName())
 
-	return h.send(ctx, headers, event, channelURI.String(), span)
+	return h.send(ctx, headers, event, channelURI.String())
 }
 
-func (h *Handler) send(ctx context.Context, headers http.Header, event *cloudevents.Event, target string, span *trace.Span) (int, time.Duration) {
+func (h *Handler) send(ctx context.Context, headers http.Header, event *cloudevents.Event, target string) (int, time.Duration) {
 
 	request, err := h.Sender.NewCloudEventRequestWithTarget(ctx, target)
 	if err != nil {
@@ -179,6 +179,9 @@ func (h *Handler) send(ctx context.Context, headers http.Header, event *cloudeve
 	}
 
 	resp, dispatchTime, err := h.sendAndRecordDispatchTime(request)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
 	if err != nil {
 		return http.StatusInternalServerError, dispatchTime
 	}
