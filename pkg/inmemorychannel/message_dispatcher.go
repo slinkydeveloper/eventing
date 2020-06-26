@@ -17,6 +17,7 @@ package inmemorychannel
 
 import (
 	"context"
+	"crypto/tls"
 	"time"
 
 	"go.uber.org/zap"
@@ -28,6 +29,8 @@ import (
 )
 
 type MessageDispatcher interface {
+	Start(ctx context.Context) error
+	StartHTTPS(ctx context.Context, certificate tls.Certificate) error
 	UpdateConfig(ctx context.Context, dispatcherConfig channel.EventDispatcherConfig, config *multichannelfanout.Config) error
 }
 
@@ -56,9 +59,15 @@ func (d *InMemoryMessageDispatcher) Start(ctx context.Context) error {
 	return d.httpBindingsReceiver.StartListen(kncloudevents.WithShutdownTimeout(ctx, d.writeTimeout), d.handler)
 }
 
+// Start starts the inmemory dispatcher's message processing.
+// This is a blocking call.
+func (d *InMemoryMessageDispatcher) StartHTTPS(ctx context.Context, certificate tls.Certificate) error {
+	return d.httpBindingsReceiver.StartListen(kncloudevents.WithShutdownTimeout(ctx, d.writeTimeout), d.handler, certificate)
+}
+
 func NewMessageDispatcher(args *InMemoryMessageDispatcherArgs) *InMemoryMessageDispatcher {
 	// TODO set read timeouts?
-	bindingsReceiver := kncloudevents.NewHttpMessageReceiver(args.Port)
+	bindingsReceiver := kncloudevents.NewHttpMessageReceiver(args.Port, 443)
 
 	dispatcher := &InMemoryMessageDispatcher{
 		handler:              args.Handler,

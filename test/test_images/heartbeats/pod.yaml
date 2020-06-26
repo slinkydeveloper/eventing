@@ -6,4 +6,14 @@ spec:
   containers:
     - name: heartbeats
       image: ko://knative.dev/eventing/test/test_images/heartbeats
+      args: ["-sink", "https://foo-kn-channel.default.svc", "-msg", "Hello world"]
+      env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: POD_NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
 

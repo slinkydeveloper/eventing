@@ -30,12 +30,6 @@ import (
 	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
 
-	cmdbroker "knative.dev/eventing/cmd/mtbroker"
-	"knative.dev/eventing/pkg/kncloudevents"
-	broker "knative.dev/eventing/pkg/mtbroker"
-	"knative.dev/eventing/pkg/mtbroker/ingress"
-	"knative.dev/eventing/pkg/reconciler/names"
-	"knative.dev/eventing/pkg/tracing"
 	kubeclient "knative.dev/pkg/client/injection/kube/client"
 	"knative.dev/pkg/configmap"
 	"knative.dev/pkg/controller"
@@ -47,6 +41,13 @@ import (
 	"knative.dev/pkg/signals"
 	"knative.dev/pkg/system"
 	tracingconfig "knative.dev/pkg/tracing/config"
+
+	cmdbroker "knative.dev/eventing/cmd/mtbroker"
+	"knative.dev/eventing/pkg/kncloudevents"
+	broker "knative.dev/eventing/pkg/mtbroker"
+	"knative.dev/eventing/pkg/mtbroker/ingress"
+	"knative.dev/eventing/pkg/reconciler/names"
+	"knative.dev/eventing/pkg/tracing"
 )
 
 var (
@@ -144,7 +145,7 @@ func main() {
 	reporter := ingress.NewStatsReporter(env.ContainerName, kmeta.ChildName(env.PodName, uuid.New().String()))
 
 	h := &ingress.Handler{
-		Receiver:  kncloudevents.NewHttpMessageReceiver(env.Port),
+		Receiver:  kncloudevents.NewHttpMessageReceiver(env.Port, 443),
 		Sender:    sender,
 		Defaulter: broker.TTLDefaulter(logger, defaultTTL),
 		Reporter:  reporter,

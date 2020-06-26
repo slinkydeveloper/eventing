@@ -28,9 +28,10 @@ import (
 	"github.com/cloudevents/sdk-go/v2/protocol/http"
 	"go.uber.org/zap"
 
+	"knative.dev/pkg/network"
+
 	"knative.dev/eventing/pkg/kncloudevents"
 	"knative.dev/eventing/pkg/utils"
-	"knative.dev/pkg/network"
 )
 
 var defaultTransformers = []binding.Transformer{
@@ -89,7 +90,7 @@ func ResolveMessageChannelFromHostHeader(hostToChannelFunc ResolveChannelFromHos
 // NewMessageReceiver creates an event receiver passing new events to the
 // receiverFunc.
 func NewMessageReceiver(receiverFunc UnbufferedMessageReceiverFunc, logger *zap.Logger, opts ...MessageReceiverOptions) (*MessageReceiver, error) {
-	bindingsReceiver := kncloudevents.NewHttpMessageReceiver(8080)
+	bindingsReceiver := kncloudevents.NewHttpMessageReceiver(8080, 443)
 	receiver := &MessageReceiver{
 		httpBindingsReceiver: bindingsReceiver,
 		receiverFunc:         receiverFunc,

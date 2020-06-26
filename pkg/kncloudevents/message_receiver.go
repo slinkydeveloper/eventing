@@ -17,13 +17,16 @@ package kncloudevents
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
-	"net"
 	nethttp "net/http"
 	"time"
 
 	"go.opencensus.io/plugin/ochttp"
+	"golang.org/x/sync/errgroup"
 	"knative.dev/pkg/tracing/propagation/tracecontextb3"
+
+	"knative.dev/eventing/pkg/logging"
 )
 
 const (
@@ -31,49 +34,74 @@ const (
 )
 
 type HttpMessageReceiver struct {
-	port int
+	httpPort  int
+	httpsPort int
 
-	handler  nethttp.Handler
-	server   *nethttp.Server
-	listener net.Listener
+	handler     nethttp.Handler
+	httpServer  *nethttp.Server
+	httpsServer *nethttp.Server
 }
 
-func NewHttpMessageReceiver(port int) *HttpMessageReceiver {
+func NewHttpMessageReceiver(httpPort int, httpsPort int) *HttpMessageReceiver {
 	return &HttpMessageReceiver{
-		port: port,
+		httpPort:  httpPort,
+		httpsPort: httpsPort,
 	}
 }
 
 // Blocking
-func (recv *HttpMessageReceiver) StartListen(ctx context.Context, handler nethttp.Handler) error {
-	var err error
-	if recv.listener, err = net.Listen("tcp", fmt.Sprintf(":%d", recv.port)); err != nil {
-		return err
-	}
-
+func (recv *HttpMessageReceiver) StartListen(ctx context.Context, handler nethttp.Handler, certs ...tls.Certificate) error {
 	recv.handler = CreateHandler(handler)
 
-	recv.server = &nethttp.Server{
-		Addr:    recv.listener.Addr().String(),
+	recv.httpServer = &nethttp.Server{
+		Addr:    fmt.Sprintf(":%d", recv.httpPort),
 		Handler: recv.handler,
 	}
 
-	errChan := make(chan error, 1)
-	go func() {
-		errChan <- recv.server.Serve(recv.listener)
-	}()
+	errGroup := &errgroup.Group{}
+	errGroup.Go(func() error {
+		logging.FromContext(ctx).Info("Starting HTTP server")
+		return recv.httpServer.ListenAndServe()
+	})
+
+	useTlS := len(certs) != 0
+	if useTlS {
+		recv.httpsServer = &nethttp.Server{
+			Addr:    fmt.Sprintf(":%d", recv.httpsPort),
+			Handler: recv.handler,
+			TLSConfig: &tls.Config{
+				Certificates: certs,
+			},
+		}
+		errGroup.Go(func() error {
+			logging.FromContext(ctx).Info("Starting HTTPS server")
+			return recv.httpsServer.ListenAndServeTLS("", "")
+		})
+	}
 
 	// wait for the server to return or ctx.Done().
-	select {
-	case <-ctx.Done():
-		ctx, cancel := context.WithTimeout(context.Background(), getShutdownTimeout(ctx))
-		defer cancel()
-		err := recv.server.Shutdown(ctx)
-		<-errChan // Wait for server goroutine to exit
-		return err
-	case err := <-errChan:
-		return err
+	<-ctx.Done()
+
+	// Graceful shutdown
+	ctx, cancel := context.WithTimeout(context.Background(), getShutdownTimeout(ctx))
+	defer cancel()
+
+	var errs []error
+	if err := recv.httpServer.Shutdown(ctx); err != nil {
+		errs = append(errs, err)
 	}
+	if useTlS {
+		if err := recv.httpsServer.Shutdown(ctx); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := errGroup.Wait(); err != nil {
+		errs = append(errs, err)
+	}
+	if errs != nil && len(errs) != 0 {
+		return fmt.Errorf("something broke while waiting for all servers to shutdown: %v", errs)
+	}
+	return nil
 }
 
 type shutdownTimeoutKey struct{}

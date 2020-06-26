@@ -18,8 +18,15 @@ package dispatcher
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
+	"sync"
 
+	"go.uber.org/zap"
+	corelisters "k8s.io/client-go/listers/core/v1"
 	"knative.dev/pkg/reconciler"
+	"knative.dev/pkg/system"
+	certresources "knative.dev/pkg/webhook/certificates/resources"
 
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/client-go/tools/cache"
@@ -36,9 +43,14 @@ import (
 // Reconciler reconciles InMemory Channels.
 type Reconciler struct {
 	eventDispatcherConfigStore *channel.EventDispatcherConfigStore
-	dispatcher                 inmemorychannel.MessageDispatcher
 	inmemorychannelLister      listers.InMemoryChannelLister
 	inmemorychannelInformer    cache.SharedIndexInformer
+	secretlister               corelisters.SecretLister
+
+	startServer        sync.Mutex
+	dispatcher         inmemorychannel.MessageDispatcher
+	serverStarted      bool
+	serverStartContext context.Context
 }
 
 func (r *Reconciler) ReconcileKind(ctx context.Context, imc *v1beta1.InMemoryChannel) reconciler.Event {
@@ -57,6 +69,12 @@ func (r *Reconciler) ReconcileKind(ctx context.Context, imc *v1beta1.InMemoryCha
 		if imc.Status.IsReady() {
 			inmemoryChannels = append(inmemoryChannels, imc)
 		}
+	}
+
+	err = r.startDispatcherIfNeeded()
+	if err != nil {
+		logging.FromContext(ctx).Error("Error starting the dispatcher", zap.Error(err))
+		return err
 	}
 
 	config := r.newConfigFromInMemoryChannels(inmemoryChannels)
@@ -87,4 +105,44 @@ func (r *Reconciler) newConfigFromInMemoryChannels(channels []*v1beta1.InMemoryC
 	return &multichannelfanout.Config{
 		ChannelConfigs: cc,
 	}
+}
+
+func (r *Reconciler) startDispatcherIfNeeded() error {
+	r.startServer.Lock()
+	defer r.startServer.Unlock()
+	if r.serverStarted {
+		return nil
+	}
+	cert, err := r.getCert()
+	if err != nil {
+		return err
+	}
+	logging.FromContext(r.serverStartContext).Info("Starting the HTTP & HTTPS server for InMemoryDispatcher")
+	go func(ctx context.Context, certificate tls.Certificate) {
+		if err := r.dispatcher.StartHTTPS(ctx, certificate); err != nil {
+			logging.FromContext(ctx).Error("Error with InMemoryDispatcher start", zap.Error(err))
+		}
+	}(r.serverStartContext, *cert)
+	return nil
+}
+
+func (r *Reconciler) getCert() (*tls.Certificate, error) {
+	secret, err := r.secretlister.Secrets(system.Namespace()).Get("eventing-imc-dispatcher-certs")
+	if err != nil {
+		return nil, err
+	}
+
+	serverKey, ok := secret.Data[certresources.ServerKey]
+	if !ok {
+		return nil, errors.New("server key missing")
+	}
+	serverCert, ok := secret.Data[certresources.ServerCert]
+	if !ok {
+		return nil, errors.New("server cert missing")
+	}
+	cert, err := tls.X509KeyPair(serverCert, serverKey)
+	if err != nil {
+		return nil, err
+	}
+	return &cert, nil
 }

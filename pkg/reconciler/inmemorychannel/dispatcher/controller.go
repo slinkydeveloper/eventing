@@ -20,6 +20,7 @@ import (
 	"context"
 	"time"
 
+	secretinformer "knative.dev/pkg/injection/clients/namespacedkube/informers/core/v1/secret"
 	"knative.dev/pkg/logging"
 
 	inmemorychannelreconciler "knative.dev/eventing/pkg/client/injection/reconciler/messaging/v1beta1/inmemorychannel"
@@ -76,11 +77,15 @@ func NewController(
 
 	inmemorychannelInformer := inmemorychannelinformer.Get(ctx)
 	informer := inmemorychannelInformer.Informer()
+	secretInformer := secretinformer.Get(ctx)
 
 	r := &Reconciler{
 		dispatcher:              inMemoryDispatcher,
 		inmemorychannelLister:   inmemorychannelInformer.Lister(),
 		inmemorychannelInformer: informer,
+		secretlister:            secretInformer.Lister(),
+		serverStartContext:      ctx,
+		serverStarted:           false,
 	}
 	impl := inmemorychannelreconciler.NewImpl(ctx, r)
 
@@ -102,14 +107,6 @@ func NewController(
 			FilterFunc: filterWithAnnotation(injection.HasNamespaceScope(ctx)),
 			Handler:    controller.HandleAll(impl.Enqueue),
 		})
-
-	// Start the dispatcher.
-	go func() {
-		err := inMemoryDispatcher.Start(ctx)
-		if err != nil {
-			logging.FromContext(ctx).Errorw("Failed stopping inMemoryDispatcher.", zap.Error(err))
-		}
-	}()
 
 	return impl
 }

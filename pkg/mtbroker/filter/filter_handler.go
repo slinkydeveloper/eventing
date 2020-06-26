@@ -87,7 +87,7 @@ func NewHandler(logger *zap.Logger, triggerLister eventinglisters.TriggerLister,
 	}
 
 	return &Handler{
-		receiver:      kncloudevents.NewHttpMessageReceiver(port),
+		receiver:      kncloudevents.NewHttpMessageReceiver(port, 443),
 		sender:        sender,
 		reporter:      reporter,
 		triggerLister: triggerLister,

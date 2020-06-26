@@ -60,3 +60,16 @@ rules:
       - create
       - update
       - patch
+# For manipulating certs into secrets.
+  - apiGroups:
+      - ""
+    resources:
+      - "secrets"
+      - "namespaces"
+    verbs:
+      - "get"
+      - "create"
+      - "update"
+      - "list"
+      - "watch"
+      - "patch"

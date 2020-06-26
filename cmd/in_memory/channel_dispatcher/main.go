@@ -37,6 +37,7 @@ func main() {
 	}
 
 	sharedmain.MainWithContext(ctx, "inmemorychannel-dispatcher",
+		inmemorychannel.NewCertsController,
 		inmemorychannel.NewController,
 	)
 }

@@ -42,6 +42,11 @@ func MakeDispatcherService(name, namespace string) *corev1.Service {
 					Port:       80,
 					TargetPort: intstr.IntOrString{IntVal: 8080},
 				},
+				{
+					Protocol:   corev1.ProtocolTCP,
+					Port:       443,
+					TargetPort: intstr.IntOrString{IntVal: 443},
+				},
 			},
 		},
 	}
