@@ -151,6 +151,20 @@ func WithSubscriptionSubscriberRefUsingGroup(gvk metav1.GroupVersionKind, name, 
 	}
 }
 
+func WithSubscriptionSubscriberRefUsingApiVersionAndGroup(gvk metav1.GroupVersionKind, name, namespace string) SubscriptionOption {
+	return func(s *v1.Subscription) {
+		s.Spec.Subscriber = &duckv1.Destination{
+			Ref: &duckv1.KReference{
+				APIVersion: apiVersion(gvk),
+				Group:      gvk.Group,
+				Kind:       gvk.Kind,
+				Name:       name,
+				Namespace:  namespace,
+			},
+		}
+	}
+}
+
 func WithSubscriptionDeliveryRef(gvk metav1.GroupVersionKind, name, namespace string) SubscriptionOption {
 	return func(s *v1.Subscription) {
 		s.Spec.Delivery = &eventingduckv1.DeliverySpec{
